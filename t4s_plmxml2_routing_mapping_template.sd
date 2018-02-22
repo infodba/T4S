@@ -1,0 +1,1763 @@
+##
+#===================================================
+# TESIS PLMware GmbH
+# Baierbrunner Strasse 15, D-81379 Muenchen, Tel: 089-747377-0
+##
+#==================================================
+#
+##
+# Project: T4S
+# @file    t4s_plmxml2_routing_mapping_template.sd
+# @brief   This is a template file for a routing mapping
+#          based on a PLMXML file of a CC-Object. It now uses the
+#          new XML Connector.
+#
+# @author         J.S., 20051201; D.H., 20100801
+#
+# @bug 20101203-BM: Released
+# 
+##
+##
+####################################################
+
+namespace eval ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING {
+  namespace export plmxml_data2sap_routing
+
+  variable Status
+  variable Info
+
+  variable ProfileName
+  variable Module
+
+  # ---------------------------------------------------------------------
+  ##
+  # Method:
+  # ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing
+  # @brief
+  #
+  #
+  # @author         J.S., 20051201
+  # @return
+  #
+  #
+  #
+  ##
+  proc plmxml_data2sap_routing {TransactionId Document args} {
+    #
+    # Import tplet, tpwith, etc
+    #
+    namespace import ::T4X::OBJECTS::*
+    #
+    variable Info
+    set ::errorCode "NONE"
+    set ::errorInfo ""
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing starts..."
+    #
+    set Status "OK"
+    #
+    array unset Info
+    #
+    # init variables
+    #
+    set Info(Level)                    0
+    set Info(ItemIndex)                1
+    set Info(OperationIndex)           1
+    set Info(SequenceIndex)            0
+    set Info(ComponentIndex)           0
+    set Info(ProductionresourceIndex)  0
+    set Info(ReferenceOperationIndex)  0
+    set Info(WorkcenterReferenceIndex) 0
+    set Info(SubOperationIndex)        0
+    set Info(LastSequenceIndex)        0
+    set Info(PlantId)                  "2000"
+    set Info(GroupCounter)             ""
+    set Info(TaskListGroup)            ""
+    set Info(ChangeNumber)             ""
+    set Info(ValidFrom)                ""
+    set Info(ValidTo)                  ""
+    #
+    set Info(TextLineIndex)            0
+    set Info(TextAllocationIndex)      0
+    #
+    # print workflow info
+    #
+    if { [info exists ::TcData(GatewayMode)] && $::TcData(GatewayMode) eq "Workflow"} {
+      foreach key "[array names ::TcData Workflow:*] [array names ::TcData WorkflowJob:*]" {
+        ::T4X::TRANSLOG::writeCustomMappingLog $TransactionId INFO  " ---- LANIT WORKFLOW ::TcData($key) = [tpco_formatHEX16 $::TcData($key)] ---"
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT WORKFLOW ::TcData($key) = [tpco_formatHEX16 $::TcData($key)] ---"
+      }
+    }
+
+#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT  ---"
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT TransactionID - $TransactionId ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT parse and check the plmxml routing structure ---"
+    
+    # parse and check the plmxml routing structure
+    tplet PLMXMLHeader $Document getHeader 0
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Get the CC object and Form information ---"	
+
+    # Get the CC object and Form information
+    set Info(CCObject) "null"
+    tplet ObjectList $PLMXMLHeader resolveTraverseRootURIs
+    foreach Object $ObjectList {
+      tplet Attachment $Object resolveAttachmentURI
+      if {[tpwith $Attachment isA CollaborationContext]} {
+        set Info(CCObject) $Attachment
+        tplet Info(CCName) $Info(CCObject) getName
+        puts "INFO: CC found -$Info(CCName)"
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: CC found -$Info(CCName) ---"
+      }
+      tplet n $Object getNumberOfChildURIs
+      puts "CC Object number of attachments -$n"
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CC Object number of attachments -$n ---"
+      for {set i 0} {$i < $n} {incr i} {
+        tplet Child $Object resolveChildURI $i
+        tplet Attachment $Child resolveAttachmentURI
+        tplet AttachmentType $Attachment getSubType
+        puts "CC Contents: - $Attachment -$AttachmentType"
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CC Contents: - $Attachment -$AttachmentType ---"
+        if { "$AttachmentType" eq "SAP2GroupInfo"} {
+          tplet Info(TaskListGroup) $Attachment getUserDataValue -dataType FormAttributes -default "" SAP2GroupID
+          tplet Info(GroupCounter)  $Attachment getUserDataValue -dataType FormAttributes -default "" SAP2GroupCounter
+          puts "INFO: SAP2GroupInfo Form found    -$Attachment"
+		  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: SAP2GroupInfo Form found    -$Attachment ---"
+          puts "INFO: SAP2GroupInfo TaskListGroup -$Info(TaskListGroup)"
+		  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: SAP2GroupInfo TaskListGroup -$Info(TaskListGroup) ---"
+          puts "INFO: SAP2GroupInfo GroupCounter  -$Info(GroupCounter)"
+		  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: SAP2GroupInfo GroupCounter  -$Info(GroupCounter) ---"
+          break
+        }
+      }
+    }
+    if { $Info(CCObject) eq "null" } {
+      ::T4X::CORE::storeMessage2 MAPPING "ERROR: No CollaborationContext found in PLMXML traverse root refs!!" ERROR
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR " ---- LANIT ERROR: No CollaborationContext found in PLMXML traverse root refs!! ---"
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing Returns ERROR"
+      return "ERROR"
+    }
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT retrieving group id and group counter UNCOMMENT PrintMethods ---"
+    
+    # retrieving group id and group counter
+    PrintMethods $Info(CCObject) 30
+    puts "Info(CCObject) $Info(CCObject)"
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT get the root structures ---"	
+    
+    # get the root structures
+    tplet ProductHeader $Document findHeader "MEProductContext"
+    tplet ProcessHeader $Document findHeader "MEProcessContext"
+#    tplet PlantHeader   $Document findHeader "MEPlantContext"
+    #
+    if {$ProductHeader eq "null"} {
+      ::T4X::CORE::storeMessage2 MAPPING "ERROR: No product tree found in CC!!" ERROR
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing Returns ERROR"
+      return "ERROR"
+    } else {
+#LANIT 
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ProductHeader is $ProductHeader ---"
+#LANIT
+	  puts "DEBUG 1"
+      tplet ItemRevision $ProductHeader resolveInstancedURI
+	  puts "DEBUG 2 $ProductHeader"
+      tplet Item $ItemRevision resolveMasterURI
+      puts "DEBUG 3 $ItemRevision"
+	  tplet ItemType $Item getSubType
+	  puts "DEBUG 4 $Item"      
+	  tplet ItemRevisionType $ItemRevision getSubType
+	  puts "DEBUG 5 $ItemRevisionType"
+	  if {$ItemRevisionType eq "MEProcessRevision"} {
+	  	    tplet ItemID $Item getCatalogueId
+	  } else {
+	        tplet ItemID $Item getProductId
+			}
+	  puts "DEBUG 6"
+      puts "INFO: Product Tree found -$ItemType -$ItemID !"
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: Product Tree found -$ItemType -$ItemID ! ---"
+    }
+    #
+    if {$ProcessHeader eq "null"} {
+      ::T4X::CORE::storeMessage2 MAPPING "ERROR: No process tree found in CC!!" ERROR
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing Returns ERROR"
+      return "ERROR"
+    } else {
+#LANIT 
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ProcessHeader is $ProcessHeader ---"
+#LANIT
+      tplet ProcessRevision $ProcessHeader resolveInstancedURI
+      tplet Process $ProcessRevision resolveMasterURI
+      tplet ProcessType $Process getSubType
+      tplet ProcessRevisionType $ProcessRevision getSubType
+      tplet ProcessID $Process getCatalogueId
+      puts "INFO: Process Tree found! -$ProcessType -$ProcessID "
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: Process Tree found! -$ProcessType -$ProcessID ---"
+    }
+    #
+#    if {$PlantHeader eq "null"} {
+#      ::T4X::CORE::storeMessage2 MAPPING "WARNING: No plant tree tree found in CC!!" WARNING
+#      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "WARNING: No plant tree tree found in CC!"
+#    } else {
+#LANIT 
+#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT PlantHeader is $PlantHeader ---"
+#LANIT
+#      tplet PlantRevision $PlantHeader resolveInstancedURI
+#      tplet Plant $PlantRevision resolveMasterURI
+#      tplet PlantType $Plant getSubType
+#      tplet PlantRevisionType $PlantRevision getSubType
+#      tplet PlantID $Plant getCatalogueId
+#      puts "INFO: Plant Tree found! -$PlantType -$PlantID "
+#	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT INFO: Plant Tree found! -$PlantType -$PlantID ---"
+#    }
+    #
+#    tpwith $ProductHeader dump -maxLevel 2
+#    tpwith $ProcessHeader dump -maxLevel 2
+     tpwith $ProductHeader dump
+     tpwith $ProcessHeader dump
+#    tpwith $PlantHeader dump -maxLevel 2
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT provide group and counter logic ---"
+    
+    # provide group and counter logic
+    if {$Info(TaskListGroup) eq ""} {
+      # new routing case
+      set $Info(TaskListGroup) ""
+      set $Info(GroupCounter)  ""
+      set Info(NewCounter)     "01"
+    } elseif {$Info(TaskListGroup) ne "" && $Info(GroupCounter) eq ""} {
+      # new alternate routing case
+      set $Info(GroupCounter)  ""
+      # get next available counter
+      set rc [RoutingGetNextCounter $Info(TaskListGroup)]
+      if {[lindex $rc 0] eq "ERROR"} {
+        ::T4X::CORE::storeMessage2 MAPPING "ERROR: No next group counter got from SAP!" ERROR
+        tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing Returns ERROR"
+        return "ERROR"
+      } else {
+        set Info(NewCounter) [lindex $rc 1]
+      }
+    } else {
+      # routing change case
+      set Info(NewCounter) "$Info(GroupCounter)"
+    }
+    #
+    puts "Info(TaskListGroup) -$Info(TaskListGroup), Info(GroupCounter) -$Info(GroupCounter), Info(NewCounter) -$Info(NewCounter),"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) -$Info(TaskListGroup), Info(GroupCounter) -$Info(GroupCounter), Info(NewCounter) -$Info(NewCounter), ---"
+    #
+    # if no change number is specified we are using the current date as valid from date
+    #
+    if {[string length $Info(ChangeNumber)] == 0} {
+      set Info(ValidFrom)                [clock format [clock seconds] -format "%Y%m%d"]
+      set Info(ValidTo)                  "99991231"
+    }
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT init routing parameter ---"
+	
+    # init routing parameter
+    set ::SAPDat(Routing:TESTMODE:BAPIFLAG)     "" ;# Enable TestMode
+    set ::SAPDat(Routing:PARAMETER:BOMUSAGE)    $::T4S_Defaults(BomUsage)
+    set ::SAPDat(Routing:PARAMETER:APPLICATION) ""  ;#
+    set ::SAPDat(Routing:PARAMETER:PROFILE)     ""  ;#
+    
+    # !!!!!!!!!!!!!!!!!!process routing elements!!!!!!!!!!!!!!!!!!!!
+    # call for MaterialTaskAllocation
+    set Status [PLMXML_Data2SAP_RoutingMaterialTaskAllocation $TransactionId $ProductHeader]
+#LANIT
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT TransactionID - $TransactionId ---"
+#First step: find material for first ProcessRevision
+#See proc PLMXML_Data2SAP_RoutingMaterialTaskAllocation
+#set Status [PLMXML_Data2SAP_RoutingMaterialTaskAllocation $TransactionId $ProcessHeader]
+# If OK than start routing process. See proc PLMXML_Data2SAP_RoutingTaskHeader
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT FINISHED proc PLMXML_Data2SAP_RoutingMaterialTaskAllocation  ---"
+#LANIT
+    # call for RoutingTaskHeader
+    if {$Status eq "OK"} {
+      set Status [PLMXML_Data2SAP_RoutingTaskHeader $TransactionId $ProcessHeader]
+    }
+
+# First initialization for routing completed
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT First initialization for routing completed  ---"
+
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT get BOM Info from SAP ---"
+    
+    # get BOM Info from SAP
+    set Info(BOMAlternate)  "01"
+    if {$Status eq "OK"} {
+      set ResultList [::T4S::PLMXML2::ROUTING::MAPPING::getBOMInfoFromSAP $TransactionId $Info(BOMAlternate)]
+      ::T4S::reconnect2SAP
+	  
+			foreach Element $ResultList {	
+				tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show ResultList= $Element	---"
+			}
+	  
+      set Status [string trim [lindex $ResultList 0]]
+      set SAP_BillOfMaterialList {}
+      set Info(SAP_BillOfMaterialList) [lindex $ResultList 1]
+				tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Info(SAP_BillOfMaterialList) = $Info(SAP_BillOfMaterialList) after setting value from Index 1 of ResultList   ---"
+    }
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT get BOM Info from TC ---"
+	
+    # get BOM Info from TC
+#    tplet Info(BomHeaderBomLines) $ProductHeader getBomLines
+#LANIT
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT TransactionID - $TransactionId ---"
+    # get BOM Info from TC
+tplet Info(BomHeaderBomLines) $ProductHeader getBomLines
+#LANIT    
+    # call for Sequence
+    if {$Status eq "OK"} {
+      set Status [PLMXML_Data2SAP_RoutingSequence $TransactionId $ProcessHeader 0 0 0]
+    }
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT proc PLMXML_Data2SAP_RoutingSequence Returns Status=$Status ---" 	
+
+    
+    # dump the Info array for debugging
+    foreach key [lsort -dictionary [array names Info]] {
+      puts "Info($key)='$Info($key)'"
+      ::T4X::TRANSLOG::writeCustomMappingLog $TransactionId INFO "TESIS_DEBUG: Info($key)='$Info($key)'"
+    }
+    
+    #
+    # Example code for setting the classification
+    #
+    #set ::SAPDat(Routing:Parameter:UpdateClassification)     "TRUE"
+    #set Status [::TPSAP::CLASS::selectClassificationDefinition "PC" "018" "" "" "" "1"]
+    #set Status [::TPSAP::CLASS::storeObjectClassificationStringValue "1" "SM_PROBLEM_CODE_APL" "" "" "000" "D" ""]
+    #
+    
+    #
+    # Enhanced RoutingChange debug option:
+    #
+    # If set to "X", the enhanced routing debugging functionality will be activated.
+    # This option might cause performance and stability issues and must not
+    # be used in a production environment except for debugging purposes in case of
+    # a transfer error.
+    #
+    set ::SAPDat(Routing:PARAMETER:FL_DEBUG) "X"
+    
+    #
+    # AutoGenerate internal SAP OPERATION_ID option:
+    #
+    # If set to TRUE, the given SAP OPERATION_ID stored in ::SAPDat(Routing:OPERATION:OPERATION_ID:$Index) will
+    # be replaced with a unique, generated ID. This ID will then be used to transfer the Routing and will be stored
+    # in a database table within SAP. Doing so, these unique OPERATION_IDs can be reused for future transfers in
+    # order to guarantee that the TC/SAP operation correlation will never be broken.
+    #
+    set ::SAPDat(Routing_TMP:CtrlParam:AutoGenerateIntOpIds) "FALSE"
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype INTERN "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing Returns $Status"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT !!!!! proc plmxml_data2sap_routing Returns Status=$Status !!!!!! ---"
+    #
+    return $Status
+  }
+
+  # ---------------------------------------------------------------------
+  ##
+  # Method:
+  # ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_MaterialMaster
+  # @brief
+  #
+  #
+  # @author         J.S., 20040903; D.H., 20100930
+  # @return
+  #
+  #
+  #
+  ##
+# LANIT customization
+  proc PLMXML_Data2SAP_RoutingMaterialTaskAllocation {TransactionId ProductHeader args} {
+    variable Info
+    set ::errorCode "NONE"
+    set ::errorInfo ""
+
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingMaterialTaskAllocation starts"
+    set Index 1
+    ::TPSAP::ROUTING::initRouting_MATERIALTASKALLOCATION_DataStructure $Index
+
+    # Get the instance, a ProductRevision (ItemRevision in TC parlance)
+    tplet ItemRevision $ProductHeader resolveInstancedURI
+#tplet ProcessRevision $ProcessHeader resolveInstancedURI
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ItemRevision from ProductHeader is $ItemRevision ---"
+    # Navigate to the master (PLMXML attribute masterRef), a Product (Item in TC parlance)
+    tplet Item $ItemRevision resolveMasterURI
+#tplet Process $ProcessRevision resolveMasterURI
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Item is $Item ---"	
+    #tplet MasterForm $ProductHeader getMasterForm
+    
+    # Get the ItemType, ItemRevType and LastReleaseStatus from the selected object
+    tplet ItemType $Item getSubType
+    tplet ItemRevisionType $ItemRevision getSubType
+#tplet ProcessType $Process getSubType
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ItemType is $ItemType ---"
+#tplet ProcessRevisionType $ProcessRevision getSubType
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ItemRevisionType is $ItemRevisionType ---"	
+#    if {$MasterForm ne "null"} {
+#      tplet LastReleaseStatus $MasterForm getUserDataValue LastReleaseStatus \
+#        -dataType FormAttributes -default ""
+#      tplet user_data_1 $MasterForm getUserDataValue user_data_1 -dataType FormAttributes -default ""
+#    } else {
+#      set LastReleaseStatus ""
+#      set user_data_1 ""
+#    }
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT get the material number from BomHeader ---"
+    
+    # get the material number from BomHeader
+#    if { $::T4S_Defaults(TestConfig) eq "ON" } {
+#      tplet Info(TaskMaterialNumber) $MasterForm getUserDataValue SAPMatNo -dataType FormAttributes -default ""
+#    } else {
+#      tplet Info(TaskMaterialNumber) $Item getProductId
+#    }
+
+	  if {$ItemRevisionType eq "MEProcessRevision"} {
+	  	    tplet Info(TaskMaterialNumber) $Item getCatalogueId
+	  } else {
+	        tplet Info(TaskMaterialNumber) $Item getProductId
+			}
+
+    puts "Product Header material number -$Info(TaskMaterialNumber)"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Product Header material number -$Info(TaskMaterialNumber) ---"
+    set Info(InternalMaterialNumber) [::TPSAP::MM::getInternalMaterialNumber "$Info(TaskMaterialNumber)"]
+	if {$ItemRevisionType eq "MEProcessRevision"} {
+	  	    tplet Info(TaskDescription) $Item getCatalogueId
+	} else {
+	        tplet Info(TaskDescription) $Item getProductId
+			}
+#tplet Info(TaskDescription) $Process getName
+    #
+    # MATERIALTASKALLOCATION -> Material task list assignment in CREATE-BAPI for
+    # routings
+    #
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT MATERIALTASKALLOCATION -> Material task list assignment in CREATE-BAPI for ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(InternalMaterialNumber) = $Info(InternalMaterialNumber)---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(PlantId) = $Info(PlantId) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) = $Info(TaskListGroup) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(GroupCounter) = $Info(GroupCounter) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ChangeNumber) = $Info(ChangeNumber) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidFrom) = $Info(ValidFrom) ---"	
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidTo) = $Info(ValidTo) ---"
+	
+    if {[string length [string trim $Info(InternalMaterialNumber)]] > 0} {
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:MATERIAL:$Index)        "$Info(InternalMaterialNumber)" ; # Material number
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:PLANT:$Index)           "$Info(PlantId)"                ; # Plant
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:TASK_LIST_GROUP:$Index) "$Info(TaskListGroup)"          ; # Key for task list group
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:GROUP_COUNTER:$Index)   "$Info(GroupCounter)"           ; # Group counter
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:CHANGE_NO:$Index)       "$Info(ChangeNumber)"           ; # Change number
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:VALID_FROM:$Index)      "$Info(ValidFrom)"              ; # Valid-from date
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:CHANGE_NO_TO:$Index)    ""                              ; # To change number
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:VALID_TO_DATE:$Index)   "$Info(ValidTo)"                ; # Valid-to date
+      set ::SAPDat(Routing:MATERIALTASKALLOCATION:DEL_IND:$Index)         ""                              ; # Deletion indicator
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingMaterialTaskAllocation Returns OK"
+      return "OK"
+    } else {
+      ::T4X::CORE::storeMessage2 MAPPING "ERROR: No valid material number found for MATERIALTASKALLOCATION!" ERROR
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingMaterialTaskAllocation Returns ERROR"
+      return "ERROR"
+    }
+  }
+# LANIT customization
+
+
+  # ---------------------------------------------------------------------
+  ##
+  # Method:
+  # ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingTaskHeader
+  # @brief
+  #
+  #
+  # @author         J.S., 20040903; D.H., 20100930
+  # @return
+  #
+  #
+  #
+  ##
+  proc PLMXML_Data2SAP_RoutingTaskHeader {TransactionId ProcessHeader args} {
+    variable Info
+    set ::errorCode "NONE"
+    set ::errorInfo ""
+    set Status "OK"
+
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingTaskHeader starts"
+    set Index 1
+    ::TPSAP::ROUTING::initRouting_TASK_DataStructure $Index
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Get the instance, a ProcessRevision ---"
+    
+    # Get the instance, a ProcessRevision
+    tplet ProcessRevision $ProcessHeader resolveInstancedURI
+
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ProcessRevision is $ProcessRevision ---"    
+
+    # find the task description
+    set Description    $Info(TaskDescription)
+    tplet Description $ProcessRevision getName
+    
+    tplet Form $ProcessHeader getForm -subType MEProcessHeader IMAN_specification
+    if {$Form ne "null"} {
+      tplet ProcessPrimeDept getUserDataValue ProcessPrimeDept
+    }
+    
+    #
+    # TASK -> Task list header data in CREATE-BAPI for routings
+    #
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT TASK -> Task list header data in CREATE-BAPI for routings ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) = $Info(TaskListGroup)---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(GroupCounter) = $Info(GroupCounter) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ChangeNumber) = $Info(ChangeNumber) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidFrom) = $Info(ValidFrom) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidTo) = $Info(ValidTo) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(PlantId) = $Info(PlantId) ---"
+	
+    set ::SAPDat(Routing:TASK:TASK_LIST_GROUP:$Index)              "$Info(TaskListGroup)"         ; # Key for task list group
+    set ::SAPDat(Routing:TASK:GROUP_COUNTER:$Index)                "$Info(GroupCounter)"          ; # Group counter
+    set ::SAPDat(Routing:TASK:CHANGE_NO:$Index)                    "$Info(ChangeNumber)"          ; # Change number
+    set ::SAPDat(Routing:TASK:VALID_FROM:$Index)                   "$Info(ValidFrom)"             ; # Valid-from date
+    set ::SAPDat(Routing:TASK:CHANGE_NO_TO:$Index)                 ""                             ; # To change number
+    set ::SAPDat(Routing:TASK:VALID_TO_DATE:$Index)                "$Info(ValidTo)"               ; # Valid-to date
+    set ::SAPDat(Routing:TASK:DEL_IND:$Index)                      ""                             ; # Deletion indicator
+    set ::SAPDat(Routing:TASK:TASK_LIST_USAGE:$Index)              "1"                            ; # Task list usage
+    set ::SAPDat(Routing:TASK:PLANT:$Index)                        "$Info(PlantId)"               ; # Plant
+    set ::SAPDat(Routing:TASK:TASK_LIST_STATUS:$Index)             "4"                            ; # Status
+    set ::SAPDat(Routing:TASK:TASK_MEASURE_UNIT:$Index)            ""                             ; # Task list unit of measure
+    set ::SAPDat(Routing:TASK:TASK_MEASURE_UNIT_ISO:$Index)        "PCE" ; # Task list ISO unit of measure
+    set ::SAPDat(Routing:TASK:LOT_SIZE_FROM:$Index)                ""                             ; # From lot size
+    set ::SAPDat(Routing:TASK:LOT_SIZE_TO:$Index)                  ""                             ; # To lot size
+    set ::SAPDat(Routing:TASK:RESP_PLANNER_GROUP:$Index)           ""                          ; # 074!!!!!!!!!!!!!!!! Responsible planner group/department
+    set ::SAPDat(Routing:TASK:DESCRIPTION:$Index)                  "$Description"                 ; # Task list description
+    set ::SAPDat(Routing:TASK:OLD_NUMBER_OF_TASK_LIST:$Index)      ""                             ; # Old number
+    set ::SAPDat(Routing:TASK:RECALC_STD_VALUES:$Index)            ""                             ; # Recalculate standard values at order creation using CAPP
+    set ::SAPDat(Routing:TASK:DYN_MODIF_LEVEL:$Index)              ""                             ; # Level at Which Dynamic Modification Parameters Are Defined
+    set ::SAPDat(Routing:TASK:DYN_MODIF_RULE:$Index)               ""                             ; # Dynamic Modification Rule
+    set ::SAPDat(Routing:TASK:DYN_MODIF_BY_VENDOR:$Index)          ""                             ; # Vendor Considered for Dynamic Modification
+    set ::SAPDat(Routing:TASK:DYN_MODIF_BY_MANUFACT:$Index)        ""                             ; # Manufacturer Considered for Dynamic Modification
+    set ::SAPDat(Routing:TASK:DYN_MODIF_BY_CUSTOMR:$Index)         ""                             ; # Customer Considered for Dynamic Modification
+    set ::SAPDat(Routing:TASK:SAMPLE_DRAWING_PROCEDURE:$Index)     ""                             ; # Sample-Drawing Procedure
+    set ::SAPDat(Routing:TASK:IND_UNITS_EXT_NUMBERING:$Index)      ""                             ; # External Numbering of Units to be Inspected
+    set ::SAPDat(Routing:TASK:IDENT_KEY:$Index)                    ""                             ; # Identification for the Inspection Point Field Combination
+    set ::SAPDat(Routing:TASK:INSPPOINT_PARTIALLOT_ASSGNMT:$Index) ""                             ; # Partial Lot Assignment in an Inspection During Production
+    set ::SAPDat(Routing:TASK:CHANGE_RULE:$Index)                  ""                             ; # Change rule
+    set ::SAPDat(Routing:TASK:OBJECT_CHANGE_TYPE:$Index)           ""                             ; # Object change type
+    set ::SAPDat(Routing:TASK:PLANNING_WORK_CENTER:$Index)         ""                             ; # Work center for capacity planning
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingTaskHeader Returns"
+    return "$Status"
+  }
+
+  # ---------------------------------------------------------------------
+  ##
+  # Method:
+  # ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingSequence
+  # @brief
+  #
+  #
+  # @author         J.S., 20040903
+  # @return
+  #
+  #
+  #
+  ##
+  proc PLMXML_Data2SAP_RoutingSequence {TransactionId ProcessHeader {CurrentSequence 0} {CurrentOperationId 0} {SequenceNumber 0} args} {
+    variable Info
+    set ::errorCode "NONE"
+    set ::errorInfo ""
+    set Status "OK"
+
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingSequence starts"
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentSequence is $CurrentSequence ---"
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentOperationId is $CurrentOperationId ---"
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SequenceNumber is $SequenceNumber ---"	
+    if {$SequenceNumber > 0} {
+      # for parallel sequences otherwise SAP default
+      incr Info(SequenceIndex)
+      set Index $Info(SequenceIndex)
+      set SequenceNumber        [format "%-0.6d" [string trimleft $SequenceNumber 0]]
+      if {$CurrentSequence ne "0"} {
+        set CurrentSequence [string trimleft $CurrentSequence 0]
+      }
+      set CurrentSequenceNumber [format "%-0.6d" $CurrentSequence 0]
+
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentSequenceNumber is $CurrentSequenceNumber ---"
+	  
+      ::TPSAP::ROUTING::initRouting_SEQUENCE_DataStructure $Index
+      #
+      # SEQUENCE -> Task list sequences in CREATE-BAPI for routings
+      #
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SEQUENCE -> Task list sequences in CREATE-BAPI for routings ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) = $Info(TaskListGroup)---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(GroupCounter) = $Info(GroupCounter) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SequenceNumber = $SequenceNumber ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ChangeNumber) = $Info(ChangeNumber) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidFrom) = $Info(ValidFrom) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidTo) = $Info(ValidTo) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentSequenceNumber = $CurrentSequenceNumber ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentOperationId = $CurrentOperationId ---"
+
+      set ::SAPDat(Routing:SEQUENCE:TASK_LIST_GROUP:$Index)              "$Info(TaskListGroup)" ; # Key for task list group
+      set ::SAPDat(Routing:SEQUENCE:GROUP_COUNTER:$Index)                "$Info(GroupCounter)" ; # Group counter
+      set ::SAPDat(Routing:SEQUENCE:SEQUENCE_NO:$Index)                  "$SequenceNumber" ; # Sequence
+      set ::SAPDat(Routing:SEQUENCE:CHANGE_NO:$Index)                    "$Info(ChangeNumber)" ; # Change number
+      set ::SAPDat(Routing:SEQUENCE:VALID_FROM:$Index)                   "$Info(ValidFrom)" ; # Valid-from date
+      set ::SAPDat(Routing:SEQUENCE:CHANGE_NO_TO:$Index)                 "" ; # To change number
+      set ::SAPDat(Routing:SEQUENCE:VALID_TO_DATE:$Index)                "$Info(ValidTo)" ; # Valid-to date
+      set ::SAPDat(Routing:SEQUENCE:DEL_IND:$Index)                      "" ; # Deletion indicator
+      set ::SAPDat(Routing:SEQUENCE:SEQUENCE_CATEGORY:$Index)            "1" ; # Sequence category (1=Paralell, 2=Alternative)
+      set ::SAPDat(Routing:SEQUENCE:REFERENCE_SEQUENCE:$Index)           "$CurrentSequenceNumber" ; # Reference sequence for a sequence
+      set ::SAPDat(Routing:SEQUENCE:DESCRIPTION:$Index)                  "Parallel Sequence" ; # Sequence description
+      set ::SAPDat(Routing:SEQUENCE:LOT_SZ_MIN:$Index)                   "" ; # From lot size
+      set ::SAPDat(Routing:SEQUENCE:LOT_SZ_MAX:$Index)                   "" ; # To lot size
+      set ::SAPDat(Routing:SEQUENCE:TASK_MEASURE_UNIT:$Index)            "$::T4S_Defaults(BaseUnit)" ; # Task list unit of measure
+      set ::SAPDat(Routing:SEQUENCE:TASK_MEASURE_UNIT_ISO:$Index)        "PCE" ; # ISO code for unit of measurement
+      set ::SAPDat(Routing:SEQUENCE:ALIGNMENT_KEY_FOR_SCHEDULING:$Index) "2" ; # Alignment key for scheduling (1=earliest, 2=latest)
+      set ::SAPDat(Routing:SEQUENCE:BRANCH_OPERATION:$Index)             "" ; # Number of the branch operation
+      set ::SAPDat(Routing:SEQUENCE:RETURN_OPERATION:$Index)             "" ; # Number of the return operation
+      set ::SAPDat(Routing:SEQUENCE:BRANCH_OPERATION_IDENT:$Index)       "$CurrentOperationId" ; # Operation ID
+      set ::SAPDat(Routing:SEQUENCE:RETURN_OPERATION_IDENT:$Index)       "$CurrentOperationId" ; # Operation ID
+      #
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingSequence returns"	  
+    }
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT get process occurrences ---"
+set FirstProcessFlag 0
+#set NextProcessFlag 0
+set NextQueue 0
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT FirstProcessFlag is $FirstProcessFlag ---"    
+    # get process occurrences
+# LANIT edited -maxLevel 3
+
+#CheckDeepLevel $ProcessHeader $FirstProcessFlag
+	
+    tplet BopLines $ProcessHeader getBomLines -maxLevel infinite
+    puts "ProcessOccurrence BopLines $BopLines ProcessHeader $ProcessHeader"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ProcessOccurrence BopLines $BopLines ProcessHeader $ProcessHeader ---"
+    # define valid operation
+    foreach ProcessOccurrence $BopLines {
+	  # Get the instance, a ItemRevision element (ItemRevision in TC parlance)
+      tplet ItemRevision $ProcessOccurrence resolveInstancedURI
+      #
+      # Navigate to the master (PLMXML attribute masterRef), a Product
+      # (Item in TC parlance)
+      #
+      tplet Item $ItemRevision resolveMasterURI
+      #
+      # Get the ItemType, ItenRevType and LastReleaseStatus from the
+      # selected object
+      #
+      tplet ItemName $Item getName
+      tplet ItemType $Item getSubType
+      puts "ProcessOccurrence $ProcessOccurrence $ItemRevision $Item $ItemType $ItemName"
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ProcessOccurrence $ProcessOccurrence $ItemRevision $Item $ItemType $ItemName ---"
+#LANIT
+				incr FirstProcessFlag 1
+				tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT FirstProcessFlag is $FirstProcessFlag ---"
+				if {$FirstProcessFlag == 1} {
+				  if {$ItemType eq "SAP9_RouteElSAP" || $ItemType eq "MEProcess"} {
+					  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT First Process DETECTED! $ProcessOccurrence $ItemRevision $Item $ItemType $ItemName ---"
+							#set Order {container}
+							#WalkProcessTree $ProcessHeader $Order ""
+				  }
+				}
+
+				if {$FirstProcessFlag > 1} {
+				  if {$ItemType eq "SAP9_RouteElSAP" || $ItemType eq "MEProcess"} {
+					  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Next ProcessOccurrence DETECTED! $ProcessOccurrence $ItemRevision $Item $ItemType $ItemName ---"
+					  set Console ""
+					  puts "$Console[tpwith $ProcessOccurrence toString]"
+					  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Console = $Console ---"
+#					  incr NextProcessFlag 1
+#					  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show NextProcessFlag = $NextProcessFlag ---"
+				  }
+				}   
+				#LANIT
+						if {[tpwith $Item isA Operation]} {
+							tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Operation DETECTED! $ItemType $ItemName ---"
+							tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT FirstProcessFlag is $FirstProcessFlag ---"
+#							tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show NextProcessFlag = $NextProcessFlag ---"
+
+#staaaart
+
+if {$FirstProcessFlag == 8} {
+							tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT FirstProcessFlag= 8 DETECTED! $ItemType $ItemName ---"
+							
+							set SequenceNumber 1
+							set CurrentSequence 0
+								set CurrentOperationId 0080
+								# for parallel sequences
+									  incr Info(SequenceIndex)
+									  set Index $Info(SequenceIndex)
+									  set SequenceNumber        [format "%-0.6d" [string trimleft $SequenceNumber 0]]
+									  if {$CurrentSequence ne "0"} {
+										set CurrentSequence [string trimleft $CurrentSequence 0]
+									  }
+									  set CurrentSequenceNumber [format "%-0.6d" $CurrentSequence 0]
+
+									tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentSequenceNumber is $CurrentSequenceNumber ---"
+									  
+									  ::TPSAP::ROUTING::initRouting_SEQUENCE_DataStructure $Index
+									  #
+									  # SEQUENCE -> Task list sequences in CREATE-BAPI for routings
+									  #
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SEQUENCE -> Task list sequences in CREATE-BAPI for routings ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) = $Info(TaskListGroup)---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(GroupCounter) = $Info(GroupCounter) ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SequenceNumber = $SequenceNumber ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ChangeNumber) = $Info(ChangeNumber) ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidFrom) = $Info(ValidFrom) ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidTo) = $Info(ValidTo) ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentSequenceNumber = $CurrentSequenceNumber ---"
+								tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CurrentOperationId = $CurrentOperationId ---"
+
+									  set ::SAPDat(Routing:SEQUENCE:TASK_LIST_GROUP:$Index)              "$Info(TaskListGroup)" ; # Key for task list group
+									  set ::SAPDat(Routing:SEQUENCE:GROUP_COUNTER:$Index)                "$Info(GroupCounter)" ; # Group counter
+									  set ::SAPDat(Routing:SEQUENCE:SEQUENCE_NO:$Index)                  "$SequenceNumber" ; # Sequence
+									  set ::SAPDat(Routing:SEQUENCE:CHANGE_NO:$Index)                    "$Info(ChangeNumber)" ; # Change number
+									  set ::SAPDat(Routing:SEQUENCE:VALID_FROM:$Index)                   "$Info(ValidFrom)" ; # Valid-from date
+									  set ::SAPDat(Routing:SEQUENCE:CHANGE_NO_TO:$Index)                 "" ; # To change number
+									  set ::SAPDat(Routing:SEQUENCE:VALID_TO_DATE:$Index)                "$Info(ValidTo)" ; # Valid-to date
+									  set ::SAPDat(Routing:SEQUENCE:DEL_IND:$Index)                      "" ; # Deletion indicator
+									  set ::SAPDat(Routing:SEQUENCE:SEQUENCE_CATEGORY:$Index)            "1" ; # Sequence category (1=Paralell, 2=Alternative)
+									  set ::SAPDat(Routing:SEQUENCE:REFERENCE_SEQUENCE:$Index)           "$CurrentSequenceNumber" ; # Reference sequence for a sequence
+									  set ::SAPDat(Routing:SEQUENCE:DESCRIPTION:$Index)                  "Parallel Sequence" ; # Sequence description
+									  set ::SAPDat(Routing:SEQUENCE:LOT_SZ_MIN:$Index)                   "" ; # From lot size
+									  set ::SAPDat(Routing:SEQUENCE:LOT_SZ_MAX:$Index)                   "" ; # To lot size
+									  set ::SAPDat(Routing:SEQUENCE:TASK_MEASURE_UNIT:$Index)            "PCE" ; # Task list unit of measure
+									  set ::SAPDat(Routing:SEQUENCE:TASK_MEASURE_UNIT_ISO:$Index)        "PCE" ; # ISO code for unit of measurement
+									  set ::SAPDat(Routing:SEQUENCE:ALIGNMENT_KEY_FOR_SCHEDULING:$Index) "2" ; # Alignment key for scheduling (1=earliest, 2=latest)
+									  set ::SAPDat(Routing:SEQUENCE:BRANCH_OPERATION:$Index)             "0020" ; # Number of the branch operation
+									  set ::SAPDat(Routing:SEQUENCE:RETURN_OPERATION:$Index)             "0020" ; # Number of the return operation
+									  set ::SAPDat(Routing:SEQUENCE:BRANCH_OPERATION_IDENT:$Index)       "A0100002" ; # Operation ID
+									  set ::SAPDat(Routing:SEQUENCE:RETURN_OPERATION_IDENT:$Index)       "A0100002" ; # Operation ID
+									  #
+									  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingSequence returns Status=$Status"
+							
+									  set Status [PLMXML_Data2SAP_RoutingOperation $TransactionId 1 $ProcessOccurrence $FirstProcessFlag $NextQueue]
+							
+							} else {
+							tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT FirstProcessFlag !=8 DETECTED! $ItemType $ItemName ---"
+							set Status [PLMXML_Data2SAP_RoutingOperation $TransactionId 0 $ProcessOccurrence $FirstProcessFlag $NextQueue]
+							}
+
+
+
+#eeeeeend
+						}
+
+				#
+				# !!!!Good place to handle next ProcessRevision!!!!
+				#	  
+					  if {[tpwith $Item isA Operation]} {
+						if {$ItemType eq "Pro4_MEOP" || $ItemType eq "MEOP"} {
+							#set Status [PLMXML_Data2SAP_RoutingOperation $TransactionId $SequenceNumber $ProcessOccurrence $FirstProcessFlag $NextQueue]
+							#ktpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT proc PLMXML_Data2SAP_RoutingOperation Returns Status=$Status ---"
+						}
+					  }
+	}
+	
+
+	
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show first 50 methods of a ProcessOccurrence UNCOMMENT ---"	
+    
+    # Show first 50 methods of a ProcessOccurrence 
+    #PrintMethods $ProcessHeader 50
+    
+    #set Order {references sequencenumbers}
+    #set Order {container}
+    #WalkProcessTree $ProcessHeader $Order ""
+    #run proc RecursivelyWalkProcessTree {Start Order ResultVar}
+	#catch {array unset Result1} 
+	#catch {array unset Result2} 
+	#catch {array unset Result3} 
+	#catch {array unset Result4} 
+	#RecursivelyWalkProcessTree $ProcessHeader {references} Result1 
+	#RecursivelyWalkProcessTree $ProcessHeader {references sequencenumbers} Result2 
+	#RecursivelyWalkProcessTree $ProcessHeader {sequencenumbers} Result3 
+	#RecursivelyWalkProcessTree $ProcessHeader {sequencenumbers references} Result4
+#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Result1= $Result1	---"
+#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Result2= $Result2	---"
+#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Result3= $Result3	---"
+#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Result4= $Result4	---"	
+
+#	foreach Element $Result3 {	
+#		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Result3= $Element	---"
+#	}
+
+	return "$Status"
+}
+  
+  # ---------------------------------------------------------------------
+  ##
+  # Method:         ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingOperation
+  # @brief
+  # @author         js, 20031031
+  # @return
+  #
+  #
+  #
+  ##
+  proc PLMXML_Data2SAP_RoutingOperation {TransactionId SequenceId ProcessOccurrence FirstProcessFlag NextQueue args} {
+    variable Info
+    set ::errorCode "NONE"
+    set ::errorInfo ""
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingOperation starts"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show args before start SequenceId $SequenceId ProcessOccurrence $ProcessOccurrence NextQueue $NextQueue ---"	
+    set Status "OK"
+
+    # Get SequenceNumber from the Occurrence/UserData/UserValue element
+    tplet ObjectSequence     $ProcessOccurrence getUserDataValue -default "" SequenceNumber
+
+#LANIT Get attributes from SAP9_OPSAP form
+	#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "###################################################################################"
+	#tplet OPSAPform $ProcessOccurrence getForm -subType SAP9_OPSAP IMAN_specification
+#	if {$OPSAPform eq "null"} {
+ #     ::T4X::CORE::storeMessage2 MAPPING "ERROR: No SAP9_OPSAP form found under operation!!" ERROR
+  #    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::plmxml_data2sap_routing Returns ERROR"
+   #   return "ERROR"
+ #   } else {
+#	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OPSAPform is $OPSAPform ---"
+#	}
+	
+	#tplet ControlKeySTEUS $OPSAPform getUserDataValue -dataType FormAttributes -default "" sap9_STEUS
+	#tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show ControlKeySTEUS=$ControlKeySTEUS ---"
+#
+#	tplet BaseQuantityBMSCH $OPSAPform getUserDataValue -dataType FormAttributes -default "" sap9_BMSCH
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show BaseQuantityBMSCH=$BaseQuantityBMSCH ---"
+#
+#	tplet StdUnitVGE02 $OPSAPform getUserDataValue -dataType FormAttributes -default "" sap9_VGE02
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show StdUnitVGE02=$StdUnitVGE02 ---"
+#
+#	tplet StdValueVGW02 $OPSAPform getUserDataValue -dataType FormAttributes -default "" sap9_VGW02
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show StdValueVGW02=$StdValueVGW02 ---"
+#
+#	tplet ActivityTypeLAR03 $OPSAPform getUserDataValue -dataType FormAttributes -default "" sap9_LAR03
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show ActivityTypeLAR03=$ActivityTypeLAR03 ---"
+#	tplet WorkCenterARBPL $OPSAPform getUserDataValue -dataType FormAttributes -default "" sap9_ARBPL
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show WorkCenterARBPL=$WorkCenterARBPL ---"
+
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype ERROR "###################################################################################"
+	
+#LANIT Get attributes from SAP9_OPSAP form
+	
+#	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show SequenceNumber from the Occurrence/UserData/UserValue element: $SequenceNumber ---"	
+
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingOperation ProcessOccurrence is $ProcessOccurrence and SequenceId is $SequenceId"
+    #
+    set Plant               "$Info(PlantId)"
+    set NumberOfEmployees   "0"
+    #set WorkCenter          "1120"
+    #set ControlKey          "PP08"
+# LANIT
+    set WorkCenter          "22102064"
+    set ControlKey          "PP01"
+# LANIT
+    set PurchInfoRecord     ""
+    set PurchOrg            ""
+    set Contract            ""
+    set LineItem            ""
+    set CostElement         ""
+    set LaborTime           ""
+    set LaborTimeUoM        ""
+    set TotalCycleTime      ""
+    set TotalCycleTimeUoM   ""
+    #
+    if {$SequenceId ne "0"} {
+      set SequenceId [string trimleft $SequenceId 0]
+    }
+    #
+    # Get the instance, a ItemRevision element (ItemRevision in TC
+    # parlance)
+    tplet ItemRevision $ProcessOccurrence resolveInstancedURI
+    #
+    # Navigate to the master (PLMXML attribute masterRef), a Product
+    # (Item in TC parlance)
+    #
+    tplet Item $ItemRevision resolveMasterURI
+    #
+    # Get the ItemType, ItenRevType and LastReleaseStatus from the
+    # selected objects
+    #
+    tplet ItemType $Item getSubType
+    set Index           $Info(OperationIndex)
+    incr Info(OperationIndex)
+    #
+    tplet Description   $Item getName
+    #
+    set BaseQuantity    "1"
+    set SequenceNumber  "$SequenceId"
+    #
+    tplet OperationId  $ProcessOccurrence getUserDataValue -default "" SequenceNumber
+	# For SequenceNumber in TC see Find No column
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show OperationId=$OperationId and Index=$Index ---"	
+    if {$OperationId eq ""} {
+      ::T4X::TRANSLOG::writeCustomMappingLog $TransactionId INFO "TESIS_Debug: No operation number assigned for $Description"
+      ::T4X::CORE::storeMessage2 MAPPING "TESIS_Debug: No operation number assigned for $Description" ERROR
+      set OPlineStatus "ERROR"        
+    }
+    #
+    # get list of Occurrence for given ProcessOccurrence
+    #
+#    tplet OccurrenceList $ProcessOccurrence getBomLines -maxLevel 1
+    tplet OccurrenceList $ProcessOccurrence getBomLines
+    #
+    puts "OP OccurrenceList $OccurrenceList BopElement $ProcessOccurrence"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OP OccurrenceList $OccurrenceList BopElement $ProcessOccurrence ---"
+    #
+    # get the first assigned workarea
+    #
+    foreach Occurrence $OccurrenceList {
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OP This is Occurrence $Occurrence from OccurrenceList $OccurrenceList ---"
+	tplet OccurrenceType $Occurrence getSubType
+      #
+      puts "OP Assigned Occurrence $Occurrence $OccurrenceType"
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OP Assigned Occurrence $Occurrence $OccurrenceType ---"
+      #
+      if {$OccurrenceType eq "MEWorkArea"} {
+        # Get the instance, a MEWorkAreaRevision element
+        tplet MEWorkAreaRevision $Occurrence resolveInstancedURI
+        #
+        # Navigate to the master (PLMXML attribute masterRef), a Product
+        # (Item in TC parlance)
+        #
+        tplet MEWorkArea $MEWorkAreaRevision resolveMasterURI
+        #
+        # Get the ItemType, ItenRevType and LastReleaseStatus from the
+        # selected object
+        #
+        tplet WorkCenter $MEWorkArea getName
+        #puts "Occurrence $Occurrence $OccurrenceType WorkCenter $WorkCenter"
+        break
+      }
+    }
+    #
+    puts "::T4S::PLMXML::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingOperation->MEWorkArea $WorkCenter"
+
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Get InternalOperationId ---"	
+	
+    #
+    set InternalOperationId "A${Info(NewCounter)}[format "%05d" $Index]"
+    #
+    set OperationId [string trimleft $OperationId 0]
+    if {[string length $OperationId] == 0} {
+      set OperationId 0
+    }
+    set OperationId         [format "%04d" $OperationId]
+    #
+    set SequenceNumber      [format "%06d" $SequenceNumber]
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Results InternalOperationId=$InternalOperationId  OperationId=$OperationId SequenceNumber=$SequenceNumber ---"
+	
+    ::TPSAP::ROUTING::initRouting_OPERATION_DataStructure $Index
+    #
+    # OPERATION -> Operations in CREATE-BAPI for routings
+    #
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OPERATION -> Operations in CREATE-BAPI for routings ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) = $Info(TaskListGroup)---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(GroupCounter) = $Info(GroupCounter) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SequenceNumber = $SequenceNumber ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ChangeNumber) = $Info(ChangeNumber) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidFrom) = $Info(ValidFrom) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidTo) = $Info(ValidTo) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OperationId = $OperationId ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT InternalOperationId = $InternalOperationId ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ControlKey = $ControlKey ---"
+
+    set ::SAPDat(Routing:OPERATION:TASK_LIST_GROUP:$Index)            "$Info(TaskListGroup)" ; # Key for task list group
+    set ::SAPDat(Routing:OPERATION:GROUP_COUNTER:$Index)              "$Info(GroupCounter)" ; # Group counter
+    set ::SAPDat(Routing:OPERATION:SEQUENCE_NO:$Index)                "$SequenceNumber" ; # Sequence
+    set ::SAPDat(Routing:OPERATION:CHANGE_NO:$Index)                  "$Info(ChangeNumber)" ; # Change number
+    set ::SAPDat(Routing:OPERATION:VALID_FROM:$Index)                 "$Info(ValidFrom)" ; # Valid-from date
+    set ::SAPDat(Routing:OPERATION:CHANGE_NO_TO:$Index)               "" ; # To change number
+    set ::SAPDat(Routing:OPERATION:VALID_TO_DATE:$Index)              "$Info(ValidTo)" ; # Valid-to date
+    set ::SAPDat(Routing:OPERATION:DEL_IND:$Index)                    "" ; # Deletion indicator
+    set ::SAPDat(Routing:OPERATION:ACTIVITY:$Index)                   "$OperationId" ; # Operation Number
+    set ::SAPDat(Routing:OPERATION:OPERATION_ID:$Index)               "$InternalOperationId" ; # Operation ID
+    set ::SAPDat(Routing:OPERATION:CONTROL_KEY:$Index)                "$ControlKey" ; # Control key
+    set ::SAPDat(Routing:OPERATION:OBJ_ID:$Index)                     "00000000" ; # Object ID of Work center
+    set ::SAPDat(Routing:OPERATION:OBJECT_TYPE_CIM_RESOURCE:$Index)   "" ; # Object types of the CIM resource
+    set ::SAPDat(Routing:OPERATION:WORK_CNTR:$Index)                  "$WorkCenter" ; # Work center
+    set ::SAPDat(Routing:OPERATION:PLANT:$Index)                      "$Plant" ; # Plant
+    set ::SAPDat(Routing:OPERATION:STANDARD_TEXT_KEY:$Index)          "" ; # Standard text key
+    set ::SAPDat(Routing:OPERATION:DESCRIPTION:$Index)                "$Description" ; # Short text
+    set ::SAPDat(Routing:OPERATION:OPERATION_MEASURE_UNIT:$Index)     ""    ; # Unit of measure for operation
+    set ::SAPDat(Routing:OPERATION:OPERATION_MEASURE_UNIT_ISO:$Index) "PCE" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:DENOMINATOR:$Index)                "1" ; # Denominator for converting rtg and op units of measure
+    set ::SAPDat(Routing:OPERATION:NOMINATOR:$Index)                  "1" ; # Numerator for converting task list and oper. un. of measure
+    set ::SAPDat(Routing:OPERATION:BASE_QUANTITY:$Index)              "$BaseQuantity" ; # Base quantity
+    set ::SAPDat(Routing:OPERATION:BREAK_TIME:$Index)                 "0" ; # Break
+    set ::SAPDat(Routing:OPERATION:BREAK_UNIT:$Index)                 "" ; # Unit for the break time
+    set ::SAPDat(Routing:OPERATION:BREAK_UNIT_ISO:$Index)             "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:ACTTYPE_01:$Index)                 "" ; # Activity Type
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_01:$Index)                "" ; # Unit of measure for the standard value 2PA033!!!!!!!!!!!!!!!!!!!!!!
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_01_ISO:$Index)            "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_01:$Index)               "1" ; # Standard value
+    set ::SAPDat(Routing:OPERATION:ACTTYPE_02:$Index)                 "200000" ; # Activity Type
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_02:$Index)                "" ; # Unit of measure for the standard value
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_02_ISO:$Index)            "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_02:$Index)               "" ; # Standard value
+    set ::SAPDat(Routing:OPERATION:ACTTYPE_03:$Index)                 "" ; # Activity Type
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_03:$Index)                "" ; # Unit of measure for the standard value
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_03_ISO:$Index)            "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_03:$Index)               "" ; # Standard value
+    set ::SAPDat(Routing:OPERATION:ACTTYPE_04:$Index)                 "" ; # Activity Type
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_04:$Index)                "" ; # Unit of measure for the standard value
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_04_ISO:$Index)            "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_04:$Index)               "" ; # Standard value
+    set ::SAPDat(Routing:OPERATION:ACTTYPE_05:$Index)                 "" ; # Activity Type
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_05:$Index)                "" ; # Unit of measure for the standard value
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_05_ISO:$Index)            "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_05:$Index)               "" ; # Standard value
+    set ::SAPDat(Routing:OPERATION:ACTTYPE_06:$Index)                 "" ; # Activity Type
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_06:$Index)                "" ; # Unit of measure for the standard value
+    set ::SAPDat(Routing:OPERATION:STD_UNIT_06_ISO:$Index)            "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_06:$Index)               "" ; # Standard value
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_CALCULATION_TYPE:$Index) "" ; # Type of standard value calculation
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_YEAR_OF_CALCULATION:$Index) "" ; # Date when the standard value was calculated
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_CODE_REFERENCE_NO:$Index) "" ; # Reference number for standard value code
+    set ::SAPDat(Routing:OPERATION:STD_VALUE_CALCULATION_BASIS:$Index) "" ; # Basis for standard value calculation
+    set ::SAPDat(Routing:OPERATION:NO_OF_CONFIRMATION_SLIPS:$Index)    "000" ; # Number of confirmation slips
+    set ::SAPDat(Routing:OPERATION:NO_OF_TIME_TICKETS:$Index)          "0" ; # Number of time tickets
+    set ::SAPDat(Routing:OPERATION:WAGETYPE:$Index)                    "" ; # Wage type
+    set ::SAPDat(Routing:OPERATION:SUITABILITY:$Index)                 "" ; # Suitability
+    set ::SAPDat(Routing:OPERATION:NO_OF_EMPLOYEE:$Index)              "$NumberOfEmployees" ; # Number of employees
+    set ::SAPDat(Routing:OPERATION:SETUP_GROUP_CATEGORY:$Index) "" ; # Setup group key
+    set ::SAPDat(Routing:OPERATION:SETUP_GROUP_KEY:$Index) "" ; # Setup group key
+    set ::SAPDat(Routing:OPERATION:SETUP_TYPE_KEY:$Index) "" ; # Setup type key
+    set ::SAPDat(Routing:OPERATION:SCRAP_FACTOR:$Index) "" ; # Scrap factor
+    set ::SAPDat(Routing:OPERATION:WAGEGROUP:$Index) "" ; # Wage group
+    set ::SAPDat(Routing:OPERATION:REQUIRED_OVERLAPPING:$Index) "" ; # Required overlapping
+    set ::SAPDat(Routing:OPERATION:OPTIONAL_OVERLAPPING:$Index) "" ; # Optional overlapping
+    set ::SAPDat(Routing:OPERATION:IND_CONT_FLOW_PRODUCTION:$Index) "" ; # Indicator: continuous flow production
+    set ::SAPDat(Routing:OPERATION:MIN_OVERLAP_TIME_UNIT:$Index) "" ; # Unit for the minimum overlap time
+    set ::SAPDat(Routing:OPERATION:MIN_OVERLAP_TIME_UNIT_ISO:$Index) "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:MIN_OVERLAP_TIME:$Index)          "0" ; # Minimum overlap time
+    set ::SAPDat(Routing:OPERATION:MIN_SEND_AHEAD_QTY:$Index)        "0" ; # Minimum send-ahead quantity
+    set ::SAPDat(Routing:OPERATION:IND_SPLITTING_REQRD:$Index)       "" ; # Required splitting
+    set ::SAPDat(Routing:OPERATION:MAX_NO_OF_SPLITS:$Index)          "0" ; # Maximum number of splits
+    set ::SAPDat(Routing:OPERATION:MIN_PROCESSING_TIME_UNIT:$Index)     "" ; # Unit for the minimum processing time
+    set ::SAPDat(Routing:OPERATION:MIN_PROCESSING_TIME_UNIT_ISO:$Index) "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:MIN_PROCESSING_TIME:$Index)         "0" ; # Minimum processing time
+    set ::SAPDat(Routing:OPERATION:MAX_WAIT_TIME_UNIT:$Index)          "" ; # Unit for the maximum wait time
+    set ::SAPDat(Routing:OPERATION:MAX_WAIT_TIME_UNIT_ISO:$Index)      "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:MAX_WAIT_TIME:$Index)               "0" ; # Maximum wait time
+    set ::SAPDat(Routing:OPERATION:REQUIRED_WAIT_TIME_UNIT:$Index)     "" ; # Unit for the required wait time
+    set ::SAPDat(Routing:OPERATION:REQUIRED_WAIT_TIME_UNIT_ISO:$Index) "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:REQUIRED_WAIT_TIME:$Index)          "0" ; # Minimum wait time
+    set ::SAPDat(Routing:OPERATION:STANDARD_QUEUE_TIME_UNIT:$Index)     "" ; # Unit for the standard queue time
+    set ::SAPDat(Routing:OPERATION:STANDARD_QUEUE_TIME_UNIT_ISO:$Index) "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STANDARD_QUEUE_TIME:$Index)          "0" ; # Standard queue time
+    set ::SAPDat(Routing:OPERATION:MIN_QUEUE_TIME_UNIT:$Index)     "" ; # Unit for the minumum queue time
+    set ::SAPDat(Routing:OPERATION:MIN_QUEUE_TIME_UNIT_ISO:$Index) "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:MIN_QUEUE_TIME:$Index)                 "0" ; # Minimum queue time
+    set ::SAPDat(Routing:OPERATION:STANDARD_MOVE_TIME_UNIT:$Index)        "" ; # Unit for the standard move time
+    set ::SAPDat(Routing:OPERATION:STANDARD_MOVE_TIME_UNIT_ISO:$Index)    "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STANDARD_MOVE_TIME:$Index)             "0" ; # Standard move time
+    set ::SAPDat(Routing:OPERATION:MIN_MOVE_TIME_UNIT:$Index)             "" ; # Unit for the minimum move time
+    set ::SAPDat(Routing:OPERATION:MIN_MOVE_TIME_UNIT_ISO:$Index)         "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:MIN_MOVE_TIME:$Index)                  "0" ; # Minimum move time
+    set ::SAPDat(Routing:OPERATION:TEARDOWN_AND_WAIT_IND:$Index)          "0" ; # Indicator: simultaneous teardown and wait
+    set ::SAPDat(Routing:OPERATION:REDUCTION_STRATEGY:$Index)             "" ; # Reduction strategy per operation/activity
+    set ::SAPDat(Routing:OPERATION:SORTED_BY:$Index)                      "" ; # Sort string for non-stock info records
+    set ::SAPDat(Routing:OPERATION:VENDOR_NO:$Index)                      "" ; # Account number of vendor or creditor
+    set ::SAPDat(Routing:OPERATION:PLND_DELRY:$Index)                     "0" ; # Planned delivery time in days
+    set ::SAPDat(Routing:OPERATION:INFO_REC_NET_PRICE:$Index)             "0" ; # Currency amount in BAPI interfaces
+    set ::SAPDat(Routing:OPERATION:PRICE_UNIT:$Index)                     "0" ; # Price unit
+    set ::SAPDat(Routing:OPERATION:COST_ELEM:$Index)                      "" ; # Cost element
+    set ::SAPDat(Routing:OPERATION:CURRENCY:$Index)                       "" ; # Currency Key
+    set ::SAPDat(Routing:OPERATION:CURRENCY_ISO:$Index)                   "" ; # ISO currency code
+    set ::SAPDat(Routing:OPERATION:INFO_REC:$Index)                       "" ; # Number of purchasing info record
+    set ::SAPDat(Routing:OPERATION:PURCH_ORG:$Index)                      "" ; # Purchasing organization
+    set ::SAPDat(Routing:OPERATION:PURCH_GROUP:$Index)                    "" ; # Purchasing group for external processing
+    set ::SAPDat(Routing:OPERATION:FIXED_LOT_EXT_PROCESS_IND:$Index)      "" ; # Indicator: fixed lot external processing
+    set ::SAPDat(Routing:OPERATION:MATL_GROUP:$Index)                     "" ; # Material group
+    set ::SAPDat(Routing:OPERATION:USERFIELDS_KEYWORD_ID:$Index)          "" ; # Key word ID for user-defined fields
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CH20_00:$Index)              "" ; # User field with 20 characters
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CH20_01:$Index)              "" ; # User field with 20 characters
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CH10_02:$Index)              "" ; # User field with 10 characters
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CH10_03:$Index)              "" ; # User field with 10 characters
+    set ::SAPDat(Routing:OPERATION:USERFIELD_QUAN_04:$Index)              "0" ; # User field for quantity (length 10.3)
+    set ::SAPDat(Routing:OPERATION:USERFIELD_UNIT_04:$Index)              "" ; # User field: Unit for quantity fields
+    set ::SAPDat(Routing:OPERATION:USERFIELD_UNIT_04_ISO:$Index)          "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:USERFIELD_QUAN_05:$Index)              "0" ; # User field for quantity (length 10.3)
+    set ::SAPDat(Routing:OPERATION:USERFIELD_UNIT_05:$Index)              "" ; # User field: Unit for quantity fields
+    set ::SAPDat(Routing:OPERATION:USERFIELD_UNIT_05_ISO:$Index)          "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CURR_06:$Index)              "0" ; # Currency amount in BAPI interfaces
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CURRENCY_06:$Index)          "" ; # User field: Unit for value fields
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CURRENCY_06_ISO:$Index)      "" ; # ISO currency code
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CURR_07:$Index)              "0" ; # Currency amount in BAPI interfaces
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CURRENCY_07:$Index)          "" ; # User field: Unit for value fields
+    set ::SAPDat(Routing:OPERATION:USERFIELD_CURRENCY_07_ISO:$Index)      "" ; # ISO currency code
+    set ::SAPDat(Routing:OPERATION:USERFIELD_DATE_08:$Index)              "" ; # User field for date
+    set ::SAPDat(Routing:OPERATION:USERFIELD_DATE_09:$Index)              "" ; # User field for date
+    set ::SAPDat(Routing:OPERATION:USERFIELD_FLAG_10:$Index)              "" ; # User field: Indicator for reports
+    set ::SAPDat(Routing:OPERATION:USERFIELD_FLAG_11:$Index)              "" ; # User field: Indicator for reports
+    set ::SAPDat(Routing:OPERATION:COST_RELEVANT:$Index)                  "" ; # Indicator for relevancy to costing
+    set ::SAPDat(Routing:OPERATION:PO_NUMBER:$Index)                      "" ; # Purchasing Document Number
+    set ::SAPDat(Routing:OPERATION:PO_ITEM:$Index)                        "" ; # Item Number of Purchasing Document
+    set ::SAPDat(Routing:OPERATION:CO_BUSPROC:$Index)                     "" ; # Business Process
+    set ::SAPDat(Routing:OPERATION:CUMULATION_TYPE:$Index)                "" ; # Cumulation type
+    set ::SAPDat(Routing:OPERATION:SUB_ACT_NOT_IN_ORDER_IND:$Index)       "" ; # Suboper. do not apply to order
+    set ::SAPDat(Routing:OPERATION:EXT_PROC_WITH_SUBCONTRACT_IND:$Index)  "" ; # Indicator: Externally processed op. with subcontracting
+    set ::SAPDat(Routing:OPERATION:INSPTYPE:$Index)                       "" ; # Inspection Type
+    set ::SAPDat(Routing:OPERATION:RECORDING_VIEW:$Index)                 "" ; # Recording View
+    set ::SAPDat(Routing:OPERATION:FREE_GRID:$Index)                      "" ; # Interval Without Reference to Time or Quantity
+    set ::SAPDat(Routing:OPERATION:TIME_GRID:$Index)                      "" ; # Interval = Time (Time-Related)
+    set ::SAPDat(Routing:OPERATION:QUANT_GRID:$Index)                     "" ; # Creation Cycle = Quantity  (Quantity-Reference)
+    set ::SAPDat(Routing:OPERATION:QUANTONCE:$Index)                      "" ; # Quantity Confirmation for Each Partial Lot
+    set ::SAPDat(Routing:OPERATION:TIME_UNIT:$Index)                      "" ; # Time Unit
+    set ::SAPDat(Routing:OPERATION:TIME_UNIT_ISO:$Index)                  "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:TIME_FACTOR:$Index)                    "" ; # Time Factor
+    set ::SAPDat(Routing:OPERATION:QTY_BTW_TWO_INSPECTIONS:$Index)        "" ; # Quantity Between Two Inspections
+    set ::SAPDat(Routing:OPERATION:QUANT_UNIT:$Index)                     "" ; # Grid Unit of Measure
+    set ::SAPDat(Routing:OPERATION:QUANT_UNIT_ISO:$Index)                 "" ; # ISO code for unit of measurement
+    set ::SAPDat(Routing:OPERATION:STOCK_RELATED_PARTIAL_LOT_ASSG:$Index) "" ; # Operation with Stock-Related Partial Lot Assignment
+    set ::SAPDat(Routing:OPERATION:INSP_POINT_COMPLT_FLOW_VARIANT:$Index) "" ; # Flow Variants for Inspection Point Completion
+    set ::SAPDat(Routing:OPERATION:GROUP_OPERATION:$Index)                "" ; # Group operation
+    #
+    # CHANG-20110524-JS: Example code for the support of longtexts for the operation description
+    #                    Remark: If you delete a long text during an update, the description of the operation is also deleted (problem of the SAP API).
+    #
+    if {[string length $::SAPDat(Routing:OPERATION:DESCRIPTION:$Index)] > 40 || [llength [split $::SAPDat(Routing:OPERATION:DESCRIPTION:$Index) "\n"]] > 1} {
+      incr Info(TextAllocationIndex)
+      
+      ::TPSAP::ROUTING::initRouting_TEXTALLOCATION_DataStructure $Info(TextAllocationIndex) 
+      set ::SAPDat(Routing:TEXTALLOCATION:OBJECT_TYPE:$Info(TextAllocationIndex)) "13" ; # Target type for Direct Input into the EWB
+      set ::SAPDat(Routing:TEXTALLOCATION:CHANGE_NO:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:CHANGE_NO:$Index) ; # Change number
+      set ::SAPDat(Routing:TEXTALLOCATION:VALID_FROM:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:VALID_FROM:$Index) ; # Valid-from date
+      set ::SAPDat(Routing:TEXTALLOCATION:TASK_LIST_GROUP:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:TASK_LIST_GROUP:$Index) ; # Key for task list group
+      set ::SAPDat(Routing:TEXTALLOCATION:GROUP_COUNTER:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:GROUP_COUNTER:$Index) ; # Group counter
+      set ::SAPDat(Routing:TEXTALLOCATION:SEQUENCE_NO:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:SEQUENCE_NO:$Index) ; # Sequence
+      set ::SAPDat(Routing:TEXTALLOCATION:ACTIVITY:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:ACTIVITY:$Index) ; # Operation Number
+      set ::SAPDat(Routing:TEXTALLOCATION:OPERATION_ID:$Info(TextAllocationIndex)) $::SAPDat(Routing:OPERATION:OPERATION_ID:$Index) ; # Operation ID
+      set ::SAPDat(Routing:TEXTALLOCATION:LANGU:$Info(TextAllocationIndex)) "DE" ; # Language key
+      set ::SAPDat(Routing:TEXTALLOCATION:LANGU_ISO:$Info(TextAllocationIndex)) "DE" ; # Language according to ISO 639
+      set ::SAPDat(Routing:TEXTALLOCATION:LINE_FROM:$Info(TextAllocationIndex)) [expr $Info(TextLineIndex) + 1] ; # Text index from
+     
+      foreach Line [split $::SAPDat(Routing:OPERATION:DESCRIPTION:$Index) "\n"] {
+        set LineLength [string length $Line]
+        if {$LineLength > 132} {
+          for {set i 0} {$i < $LineLength} {incr i 132} {
+            incr Info(TextLineIndex)
+            set SubString [string range $Line $i [expr $i + 132]]
+            set ::SAPDat(Routing:TEXT:FORMAT_COL:$Info(TextLineIndex)) "=" ; # Tag column
+            set ::SAPDat(Routing:TEXT:TEXT_LINE:$Info(TextLineIndex)) "$SubString" ; # Text line
+          }
+        } else {
+          incr Info(TextLineIndex)
+          set ::SAPDat(Routing:TEXT:FORMAT_COL:$Info(TextLineIndex)) "/" ; # Tag column
+          set ::SAPDat(Routing:TEXT:TEXT_LINE:$Info(TextLineIndex)) "$Line" ; # Text line
+        }
+      }  
+      set ::SAPDat(Routing:TEXTALLOCATION:LINE_TO:$Info(TextAllocationIndex)) $Info(TextLineIndex) ; # Text index to
+      set ::SAPDat(Routing:OPERATION:DESCRIPTION:$Index) [lindex [split $::SAPDat(Routing:OPERATION:DESCRIPTION:$Index) "\n"] 0]  
+    }
+# LANIT
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Add the consumed items(components) to the routing for each operation ---"	
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Everything is ready to start RoutingComponentAllocation ---" 	      
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT  SequenceNumber=$SequenceNumber OperationId=$OperationId InternalOperationId=$InternalOperationId OccurrenceList=$OccurrenceList FirstProcessFlag=$FirstProcessFlag NextQueue=$NextQueue ---"
+	  set Status [PLMXML_Data2SAP_RoutingComponentAllocation $TransactionId "$SequenceNumber" "$OperationId" "$InternalOperationId" "$OccurrenceList" "$FirstProcessFlag" "$NextQueue"]
+# LANIT
+    # Add the consumed items to the routing
+    set ConsumedOccurrenceList {}
+    #
+    foreach Occurrence $OccurrenceList {
+      tplet OccurrenceType $Occurrence getSubType
+	  	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CHECK OccurrenceType for Occurrence $Occurrence from OccurrenceList $OccurrenceList is $OccurrenceType ---"
+      #
+      if {$OccurrenceType eq "MEConsumed"} {
+
+	  	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT DETECTED!!! OccurrenceType MEConsumed for Occurrence $Occurrence from OccurrenceList $OccurrenceList ---"
+
+        lappend ConsumedOccurrenceList $Occurrence
+      }
+    }
+    if {[llength $ConsumedOccurrenceList] > 0} {
+
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT For MEConsumed occurrence type everything is ready to start RoutingComponentAllocation ---" 	
+       
+	   set Status [PLMXML_Data2SAP_RoutingComponentAllocation $TransactionId "$SequenceNumber" "$OperationId" "$InternalOperationId" "$ConsumedOccurrenceList" "$FirstProcessFlag" "$NextQueue"]
+    }
+    
+    #
+    # Add the resources to the routing
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingOperation returns $Status"
+    #
+    return $Status
+  }
+  
+  # ---------------------------------------------------------------------
+  ##
+  # Method:
+  # ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingComponentAllocation
+  # @brief
+  # @author         js, 20031031
+  # @return
+  #
+  #
+  #
+  ##
+  proc PLMXML_Data2SAP_RoutingComponentAllocation {TransactionId SequenceId OperationId InternalOperationId OccurrenceList FirstProcessFlag NextQueue  args} {
+    variable Info
+    set ::errorCode "NONE"
+    set ::errorInfo ""
+    set Status "OK"
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingComponentAllocation starts"
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT (EDITED) Show args before start SequenceId=$SequenceId; OperationId=$OperationId; InternalOperationId=$InternalOperationId; OccurrenceList=$OccurrenceList; FirstProcessFlag=$FirstProcessFlag; NextQueue=$NextQueue ---"	
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show Info(TaskMaterialNumber)= $Info(TaskMaterialNumber) ---"	
+
+    set Plant          "$Info(PlantId)"
+    set ValidFrom      $Info(ValidFrom)
+    set ValidTo        $Info(ValidTo)
+    
+    # set Bom info
+    set BomNo         "[lindex [lindex $Info(SAP_BillOfMaterialList) 0] 4]"
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT BomNo = $BomNo ---"					
+    set BomAlt        "$Info(BOMAlternate)"
+    set ItemNo        ""
+    set ItemCateg     ""
+    set Component     ""
+    set ItemIdent     ""
+    
+      #  foreach SAP_BomLine $Info(SAP_BillOfMaterialList) {
+       #   puts "SAP_BomLine -$SAP_BomLine"
+		#  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SAP_BomLine -$SAP_BomLine ---"
+# LANIT output example for SAP_BomLine
+# ---- LANIT SAP_BomLine -0010 L OZMNEW0002 00000001 00026473 {} ---
+# ---- LANIT OperationId -0010, ItemNo -0010, ItemCateg -L, Component -OZMNEW0002, ItemIdent -00000001, ---
+#          set ItemNo [string trim [lindex $SAP_BomLine 0]]
+#          if {$ItemNo == $ProductSequenceNo} {
+      #      set ItemCateg    [lindex $SAP_BomLine 1]
+#           set Component    [lindex $SAP_BomLine 2]
+			#	if {$NextQueue < $FirstProcessFlag} {
+			#		#set ItemNo "0000"
+			#		#set Component $Info(TaskMaterialNumber)
+			#		set ItemNo [string trim [lindex $SAP_BomLine 0]]
+			#		set Component    [lindex $SAP_BomLine 2]
+			#		} else {
+			#		set ItemNo [string trim [lindex $SAP_BomLine 0]]
+			#		set Component    [lindex $SAP_BomLine 2]
+			#	}
+            #set ItemIdent    [lindex $SAP_BomLine 3]
+            #break
+#          }
+        #}
+
+   puts "OccurrenceList $OccurrenceList"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OccurrenceList $OccurrenceList ---"	
+    foreach Occurrence $OccurrenceList {
+      tplet OccurrenceType $Occurrence getSubType
+      puts "Occurrence $Occurrence OccurrenceType $OccurrenceType"
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Occurrence $Occurrence OccurrenceType $OccurrenceType ---"	
+      if {$OccurrenceType eq "MEConsumed"} {
+        # get the corresponding SequenceNo from the ProductTree
+        foreach TC_BomLine Info(BomHeaderBomLines) {
+        }
+        tplet LinkedProductLine  $Occurrence resolveLinkedOccurrenceURI
+        tplet ProductSequenceNo $LinkedProductLine getUserDataValue -default "" SequenceNumber
+        set ProductSequenceNo [string trimleft [string trim $ProductSequenceNo] 0]
+        set ProductSequenceNo [format %04d $ProductSequenceNo]
+        puts "Occurrence -$Occurrence, LinkedProductLine -$LinkedProductLine, ProductSequenceNo -$ProductSequenceNo,"
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Occurrence -$Occurrence, LinkedProductLine -$LinkedProductLine, ProductSequenceNo -$ProductSequenceNo, ---"
+        foreach SAP_BomLine $Info(SAP_BillOfMaterialList) {
+          puts "SAP_BomLine -$SAP_BomLine"
+		  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SAP_BomLine -$SAP_BomLine ---"
+          set ItemNo [string trim [lindex $SAP_BomLine 0]]
+          if {$ItemNo == $ProductSequenceNo} {
+            set ItemCateg    [lindex $SAP_BomLine 1]
+            set Component    [lindex $SAP_BomLine 2]
+            set ItemIdent    [lindex $SAP_BomLine 3]
+            break
+          }
+        }
+        puts "OperationId -$OperationId, ItemNo -$ItemNo, ItemCateg -$ItemCateg, Component -$Component, ItemIdent -$ItemIdent,"
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OperationId=$OperationId, ItemNo=$ItemNo, ItemCateg=$ItemCateg, Component=$Component, ItemIdent=$ItemIdent, ---"
+        #
+        if {[string length $ItemIdent] > 0} {
+          incr Info(ComponentIndex)
+          set Index $Info(ComponentIndex)
+          #
+          ::TPSAP::ROUTING::initRouting_COMPONENTALLOCATION_DataStructure $Index
+          #
+          # COMPONENTALLOCATION -> Component assignment in CREATE-BAPI for routing
+          #
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT COMPONENTALLOCATION -> Component assignment in CREATE-BAPI for routing ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(TaskListGroup) = $Info(TaskListGroup)---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(GroupCounter) = $Info(GroupCounter) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT SequenceId = $SequenceId ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ChangeNumber) = $Info(ChangeNumber) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidFrom) = $Info(ValidFrom) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Info(ValidTo) = $Info(ValidTo) ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT OperationId = $OperationId ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT InternalOperationId = $InternalOperationId ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT BomNo = $BomNo ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT BomAlt = $BomAlt ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT ItemIdent = $ItemIdent ---"
+          set ::SAPDat(Routing:COMPONENTALLOCATION:TASK_LIST_GROUP:$Index)          "$Info(TaskListGroup)" ; # Key for task list group
+          set ::SAPDat(Routing:COMPONENTALLOCATION:GROUP_COUNTER:$Index)            "$Info(GroupCounter)" ; # Group counter
+          set ::SAPDat(Routing:COMPONENTALLOCATION:SEQUENCE_NO:$Index)              "$SequenceId" ; # Sequence
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CHANGE_NO:$Index)                "$Info(ChangeNumber)" ; # Change number
+          set ::SAPDat(Routing:COMPONENTALLOCATION:VALID_FROM:$Index)               "$Info(ValidFrom)" ; # Valid-from date
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CHANGE_NO_TO:$Index)             "" ; # To change number
+          set ::SAPDat(Routing:COMPONENTALLOCATION:VALID_TO_DATE:$Index)            "$Info(ValidTo)" ; # Valid-to date
+          set ::SAPDat(Routing:COMPONENTALLOCATION:DEL_IND:$Index)                  "" ; # Deletion indicator
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ACTIVITY:$Index)                 "$OperationId" ; # Operation Number
+          set ::SAPDat(Routing:COMPONENTALLOCATION:OPERATION_ID:$Index)             "$InternalOperationId" ; # Internal Operation ID
+          set ::SAPDat(Routing:COMPONENTALLOCATION:BOM_TYPE:$Index)                 "M" ; # BOM category
+          set ::SAPDat(Routing:COMPONENTALLOCATION:BOM_NO:$Index)                   "$BomNo" ; # Bill of material
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ALTERNATIVE_BOM:$Index)          "$BomAlt" ; # Alternative BOM
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ITEM_ID:$Index)                  "$ItemIdent" ; # Item ID
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ITEM_NO:$Index)                  "" ; # BOM item number
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CUTTING_MEASURE_DIVISOR:$Index)  "" ; # Integral divisor for cutting measures
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CUTTING_MEASURE_1:$Index)        "" ; # Cutting measure 1
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CUTTING_MEASURE_2:$Index)        "" ; # Cutting measure 2
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CUTTING_MEASURE_3:$Index)        "" ; # Cutting measure 3
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CUTTING_MEASURE_UNIT:$Index)     "" ; # Unit for cutting measures
+          set ::SAPDat(Routing:COMPONENTALLOCATION:CUTTING_MEASURE_UNIT_ISO:$Index) "" ; # ISO code for unit of measurement
+          set ::SAPDat(Routing:COMPONENTALLOCATION:COMP_QTY:$Index)                 "" ; # Component quantity
+          set ::SAPDat(Routing:COMPONENTALLOCATION:COMP_UNIT:$Index)                "" ; # Component unit of measure
+          set ::SAPDat(Routing:COMPONENTALLOCATION:COMP_UNIT_ISO:$Index)            "" ; # ISO code for unit of measurement
+          set ::SAPDat(Routing:COMPONENTALLOCATION:BACKFLUSH:$Index)                "" ; # Indicator: Backflush
+          set ::SAPDat(Routing:COMPONENTALLOCATION:PLANT:$Index)                    "$Plant" ; # Plant
+          set ::SAPDat(Routing:COMPONENTALLOCATION:MATERIAL:$Index)                 "" ; # Material number
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ORDER_LVL:$Index)                "" ; # Order level
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ORDER_PATH:$Index)               "" ; # Order path
+          set ::SAPDat(Routing:COMPONENTALLOCATION:BOM_TYPE_ROOT:$Index)            "M" ; # BOM category
+          set ::SAPDat(Routing:COMPONENTALLOCATION:BOM_NO_ROOT:$Index)              "$BomNo" ; # Bill of material
+          set ::SAPDat(Routing:COMPONENTALLOCATION:ALTERNATIVE_BOM_ROOT:$Index)     "$BomAlt" ; # Alternative BOM
+          set ::SAPDat(Routing:COMPONENTALLOCATION:PATH:$Index)                     "000000" ; # Path in exploded BOM tree
+        }
+#      }
+#    }
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::PLMXML_Data2SAP_RoutingComponentAllocation return"
+    return "OK"
+  }
+  
+  # ---------------------------------------------------------------------
+  ##
+  # Method:         ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::SAP_Routing2PLMXML_Data
+  # @brief 
+  # @author         J.S., 20060212
+  # @return 
+  #
+  #
+  # @bug 20090820-JS: Extensions for t4sdemo feature include
+  # 
+  ##
+  proc SAP_Routing2PLMXML_Data {TransactionId PlmXmlString TransferStatus GroupId GroupCounter} {
+    #
+    variable Info
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::SAP_Routing2PLMXML_Data Starts with $TransactionId $TransferStatus $GroupId $GroupCounter"
+    set StatusList {}
+    set Status "OK"
+    #
+    # Enhanced RoutingChange debug option:
+    #
+    # If activated in the main mapping proc, the additional debug information will be stored in the session log
+    #
+    if { [info exists ::SAPDat(Routing:PARAMETER:FL_DEBUG)] && $::SAPDat(Routing:PARAMETER:FL_DEBUG) eq "X" } {
+      foreach elem [::T4X::CORE::sortIndexedInterfaceTable [array names ::RoutingResultDat]] {
+        tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::RoutingResultDat($elem) = $::RoutingResultDat($elem)"
+      }
+    }
+    #
+    if {$TransferStatus eq "CREATED" || $TransferStatus eq "CHANGED" || $TransferStatus eq "UPDATED_WITH_ERROR"} {
+      #
+      # get Form tag for the update of the attributes
+      #
+      if {[info exists ::T4S_Defaults(TestConfig)]} {
+        set FormTag [::PXM::getTagSeg4Type $PlmXmlString Form SAP2GroupInfo]
+      } else {
+        set FormTag [::PXM::getTagSeg4Type $PlmXmlString Form SAPGroupInfo]
+      }
+      if {[string length $FormTag] > 0} {
+        #
+        # Update FormAttribute Value
+        #
+        if {[info exists ::T4S_Defaults(TestConfig)]} {
+          set FormTag [::PXM::setFormAttributeValue $FormTag SAP2GroupCounter $GroupCounter]
+          set FormTag [::PXM::setFormAttributeValue $FormTag SAP2GroupID $GroupId]
+        } else {
+          set FormTag [::PXM::setFormAttributeValue $FormTag groupCounter $GroupCounter]
+          set FormTag [::PXM::setFormAttributeValue $FormTag groupID $GroupId]
+        }
+        set FormId  [::PXM::getValue $FormTag id]
+        #
+        # get current date and time for PLMXML update
+        #
+        set Date [clock format [clock seconds] -format "%Y-%m-%d"]
+        set Time [clock format [clock seconds] -format "%H:%H:%S"]
+        #
+        # Build PLMXML string for database update
+        #
+        set NewPLMXML     "<?xml version=\"1.0\" encoding=\"utf-8\"?> \n"
+        append  NewPLMXML "<PLMXML xmlns=\"http://www.plmxml.org/Schemas/PLMXMLSchema\"\n"
+        append  NewPLMXML " schemaVersion=\"6\" date=\"$Date\" time=\"$Time\" author=\"T4S Routing Transfer\">\n"
+        if {[info exists ::T4S_Defaults(TestConfig)]} {
+          append  NewPLMXML "<Header id=\"id1\" traverseRootRefs=\"#$FormId\" transferContext=\"SAP2TransferMode_Import_SAP\"></Header>\n"
+        } else {
+          append  NewPLMXML "<Header id=\"id1\" traverseRootRefs=\"#$FormId\" transferContext=\"CR_Import_SAP\"></Header>\n"
+        }
+        append  NewPLMXML "$FormTag\n"
+        append  NewPLMXML "</PLMXML>\n"
+        lappend StatusList "$Status"
+        lappend StatusList $NewPLMXML
+      } else {
+        lappend StatusList $Status
+      }
+    } else {
+      set FormId ""
+      set Date [clock format [clock seconds] -format "%Y-%m-%d"]
+      set Time [clock format [clock seconds] -format "%H:%H:%S"]
+      #
+      # Build PLMXML string for database update
+      #
+      set NewPLMXML     "<?xml version=\"1.0\" encoding=\"utf-8\"?> \n"
+      append  NewPLMXML "<PLMXML xmlns=\"http://www.plmxml.org/Schemas/PLMXMLSchema\"\n"
+      append  NewPLMXML " schemaVersion=\"6\" date=\"$Date\" time=\"$Time\" author=\"T4S Routing Transfer\">\n"
+      if {[info exists ::T4S_Defaults(TestConfig)]} {
+        append  NewPLMXML "<Header id=\"id1\" traverseRootRefs=\"#$FormId\" transferContext=\"SAP2TransferMode_Import_SAP\"></Header>\n"
+      } else {
+        append  NewPLMXML "<Header id=\"id1\" traverseRootRefs=\"#$FormId\" transferContext=\"CR_Import_SAP\"></Header>\n"
+      }
+      #append  NewPLMXML "$FormTag\n"
+      append  NewPLMXML "</PLMXML>\n"
+      lappend StatusList "$Status"
+      lappend StatusList $NewPLMXML
+
+      #
+      # Now we check, if we have to send an error email to the user
+      #
+      set SendErrorMail  [::T4X::TC::MAPPING::getWorkflowArgumentValue "-enableErrorMail"]
+      if {[string length $SendErrorMail] == 0} {
+        set SendErrorMail  "NO"
+      }
+      #
+      if {$SendErrorMail ne "NO"} {
+        if {[info exists ::TcData(PersonAttribute:PA9)]} {
+          set MailAddress [tpco_formatHEX16 $::TcData(PersonAttribute:PA9)]
+          if {[string length $MailAddress] > 0} {
+            set Subject      "Failed to create Routing."
+            set ErrorMessage "Failed to create Routing per CC.\n"
+            catch {::T4S::sendMailWithSAPErrors "$MailAddress" $Subject $ErrorMessage}
+            ::T4X::CORE::writeStatusLogInfo "::T4S::sendMailWithSAPErrors" $Status
+          }
+        }
+      }
+      lappend StatusList $Status
+    }
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::SAP_Routing2PLMXML_Data Returns $Status"
+    #
+    return $StatusList
+  }
+  
+  # ---------------------------------------------------------------------
+  ##
+  # Method:         ::T4S::PLMXML2::ROUTING::CUSTOM::MAPPING::RoutingGetNextCounter
+  # @brief 
+  # @author         B.M.;2010-12-01
+  # @return 
+  #
+  #
+  # 
+  ##
+  proc RoutingGetNextCounter { Group args } {
+    variable Info
+    set HexMessageList  {}
+    #
+    set Commit          "false"
+    set CaloInit        "false"
+    set SapCall         "/TESISPLM/T4S_RTG_GET_HIGHEST"
+    set strArrayName    "::SAPDat"
+    set strArrayPattern "RoutingCheck"
+    #
+    if { $Group eq "" } {
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "RoutingGetNextCounter starts: No group was specified as input, a new group will automatically receive counter 01 as next counter"
+      set NextAvailableCounter "OK 01"
+      return $NextAvailableCounter
+    } else {
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "RoutingGetNextCounter for group >$Group< starts..."
+      #
+      set ::SAPDat(RoutingCheck:PARAMETER:FROM) "$Group"
+      set ::SAPDat(RoutingCheck:PARAMETER:TO) "$Group"
+      set ::SAPDat(RoutingCheck:PARAMETER:PLNTY) "N"
+      # perform SAP call
+      set rc [::TPSAP::MISCELLANEOUS::performGenericSapCall $SapCall $strArrayName $strArrayPattern $Commit $CaloInit]
+      #
+      tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "::TPSAP::MISCELLANEOUS::performGenericSapCall $SapCall returns >$rc<"
+      #
+      if { $rc eq "OK"} {
+        tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "Receive highest existing counter >$::sap_result_array(PLNAL)< and group >$::sap_result_array(PLNNR)< for input group >$Group<"
+        if { $::sap_result_array(PLNNR) > 0 && $::sap_result_array(PLNAL) > 0 } {
+          if { $::sap_result_array(PLNAL) < 99 } {
+            #
+            # OK
+            #
+            set NextAvailableCounter [list "OK" "[format %02d [incr ::sap_result_array(PLNAL)]]"]
+          } else {
+            #
+            # Max number of 99 exceeded -> ERROR
+            #
+            set NextAvailableCounter [list "ERROR" "[format %02d [incr ::sap_result_array(PLNAL)]]"]
+          }
+        } else {
+          set NextAvailableCounter "ERROR"
+        }
+      } else {
+        set NextAvailableCounter "ERROR"
+      }
+    }
+    #
+    tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK "RoutingGetNextCounter returns counter >$NextAvailableCounter<"
+    #
+    return $NextAvailableCounter
+  }
+  
+  ###
+  # Example of how to visit all the BOP lines of the process tree. This example
+  # recursively walks the full tree.
+  #
+  # @param BopElement The BOP header or a BOP line. In the PLMXML file these are
+  # ProcessOccurrence elements.
+  # @param Prefix Prefix string used to pretty print the result.
+  # @author dirk
+  #
+  proc WalkProcessTree {BopElement Order {Prefix ""}} {
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT proc WalkProcessTree starts here ---"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT BopElement is $BopElement ---"  
+        # Do something with the BOP header or BOP line
+    #puts "$Prefix[tpwith $BopElement toString]"
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT $Prefix[tpwith $BopElement toString] ---"    
+    set NewPrefix "$Prefix  "
+set Step 0
+    # These are the BOP lines with at least one successor but no predecessors. They
+    # are the starting points for a traversal along the successor relation. NOTE that
+    # you will not find "successorRefs" attributes in the PLMXML document. The
+    # successor relations are computed from the "predecessorRefs" attributes. Most
+    # likely the length of the returned list will be 0 if no children have a
+    # predecessorRefs attribute or 1 if there is such a child.
+    tplet Children $BopElement getBeginnings -by $Order
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Step=$Step Get Children for BopElement= $BopElement getBeginnings  -by Order= $Order ---"	
+    # Options:
+    # -by SORT_TYPE_LIST
+    #   with SORT_TYPE_LIST being a tcl list of one or more out of the following
+    #   constants: References, SequenceNumber, Container
+    #
+    #   The first element of the list is used to decide by which method the
+    #   beginnings are to be found:
+    #     References (default) - Search for the beginnings using predecessorRefs
+    #     SequenceNumber - Search for the beginning using the SequenceNumber
+    #       UserValue
+    #     Container - Return a list containing only the first child enlisted in the
+    #       occurrenceRefs attribute or an empty list if there are no children
+    #   The result can be a list e.g. if there are multiple BOP elements with the
+    #   same sequence number. The other elements in SORT_TYPE_LIST are then used to
+    #   sort the result:
+    #     References - Sort the resulting list by predecessorRefs
+    #     SequenceNumber - Sort the resulting list by the SequenceNumber UserValue
+    #     Container - Sort by appearance in the occurrenceRefs attributes
+
+    foreach Child $Children {
+	incr Step 1
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Step=$Step Sent Child= $Child from Children= $Children to TraverseLinkStructure---"
+      TraverseLinkStructure $Child $Order $NewPrefix $BopElement
+    }
+
+    # These are the BOP lines which are not ordered by "predecessorRefs" attributes.
+    # NOTE that unlike getBopLines this method does not support the -maxLevel option.
+    # It always just returns the direct children of the given node.
+    #
+    tplet Children $BopElement getChildren -excludeOrderedBy [lindex $Order 0]
+    # Options:
+    # -includeOrderedBy FILTER_TYPE_LIST
+    # -excludeOrderedBy FILTER_TYPE_LIST
+    # with FILTER_TYPE_LIST being a tcl list of one or more out of the following
+    # constants:
+    #   References - Include/Exclude BOP lines which are ordered by predecessorRefs
+    #   SequenceNumber - Include/Exclude BOP lines which are ordered by their
+    #     SequenceNumber UserValues
+    #   Container - Include/Exclude BOP lines which are ordered solely by their
+    #     appearance in the occurrenceRefs attributes
+
+    foreach Child $Children {
+      incr Step 10
+	  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Again WalkProcessTree Step=$Step"
+	  WalkProcessTree $Child $Order $NewPrefix
+    }
+  }
+
+  ###
+  # Example of how to traverse along the successor relation. This example
+  # recursivly visits all the nodes wired together through the predecessor links.
+  # NOTE that this may visit the same node multiple times if there exist parallel
+  # paths in the link structure.
+  #
+  # @param Node the node from which to start the traversal
+  # @param Prefix Prefix string used to pretty print the result.
+  #
+  proc TraverseLinkStructure {BopElement Order Prefix Parent} {
+
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT proc TraverseLinkStructure starts here ---" 
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show arguments ---" 
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT BopElement = $BopElement ; Order = $Order ; Prefix = $Prefix ; Parent = $Parent ---"
+tplet BopElementType $BopElement getSubType
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Show BopElementType = $BopElementType for BopElement = $BopElement ---"
+    
+	WalkProcessTree $BopElement $Order $Prefix
+
+    # Get successors of a BOP element. NOTE that
+    # you will not find "successorRefs" attributes in the PLMXML document. The
+    # successor relations are computed from the "predecessorRefs" attributes.
+    #tplet Successors $BopElement getSuccessors
+    tplet Successors $BopElement getSuccessors -by $Order; # same as previous
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Get list of Successors for $BopElement---"  	
+    # Options:
+    # -by SORT_TYPE_LIST
+    #   with SORT_TYPE_LIST being a tcl list of one or more out of the following
+    #   constants: References, SequenceNumber, Container
+    #
+    #   The first element of the list is used to decide by which method the
+    #   successors are to be found:
+    #     References (default) - Find successors using predecessorRefs
+    #     SequenceNumber - Find successors using the SequenceNumber UserValue
+    #     Container - Find successors by appearance in the occurrenceRefs attributes
+    #   The result can be a list e.g. if there are multiple BOP elements with the
+    #   same sequence number. The other elements in SORT_TYPE_LIST are then used to
+    #   sort the result:
+    #     References - Sort the resulting list by predecessorRefs
+    #     SequenceNumber - Sort the resulting list by the SequenceNumber UserValue
+    #     Container - Sort by appearance in the occurrenceRefs attributes
+
+    foreach Successor $Successors {
+	tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Successor is $Successor from list of Successors=$Successors ---"
+      TraverseLinkStructure $Successor $Order $Prefix $BopElement
+    }
+  }  
+  
+  proc PrintMethods {Object {count -1}} {
+    # Get meta data for the object as a Tcl array
+    ::T4X::OBJECTS::tpdescribe $Object description
+
+    # Extract keys of the form "method N example" where N stands for a sequential
+    # number counting the methods (it starts with 0 so add 1 to get the count).
+    # Sort the keys by the sequential number. Keys are tcl lists (as opposed to
+    # SUBKEY::SUBKEY::etc) so the keys can be sorted using lsort -index
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT PrintMethods starts work... ---"	
+    set keys [lsort -integer -index 1 [array names description "method * example"]]
+    foreach key $keys {
+      if {$count == 0} {
+        break
+      }
+      incr count -1
+      puts $description($key)
+    }
+tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT PrintMethods completed work... ---"	
+  }
+
+#LANIT from manual
+	## 
+	# Recursively traverse the whole process tree 
+	# 
+	# @param Start element to start from 
+	# @param Order order by which to traverse the tree 
+	# @ResultVar Name of an array to collect the results
+	proc RecursivelyWalkProcessTree {Start Order ResultVar} {
+	 upvar $ResultVar Result
+	 # Number of successors already visited 
+	 set Result(joins) 0 
+	 # Number of all visited elements 
+	 set Result(all) 0 
+	 # Number of elements at which a left to right traversal begins 
+	 set Result(beginnings) 0 
+	 # Number of elements not ordered by the given order 
+	 set Result(unordered) 0
+	RecursivelyTraverseTopToBottom $Start $Order 0 Result
+	}
+
+	proc RecursivelyTraverseTopToBottom {BopElement Order Depth ResultVar} {
+	 upvar $ResultVar Result
+	# Do something with the BOP element. Here we just count it.
+		incr Result(all) 
+		set NewDepth [expr $Depth + 1]
+	# Get leftmost elements e.g. those with no 
+	# predecessors or those with the lowest sequence 
+	# number. May be empty if children are not sorted by 
+	# the given order. 
+		tplet Beginnings $BopElement getBeginnings -by $Order
+	# Foreach leftmost element start a new horizontal 
+	# traversal. Such traversals may cover the same 
+	# elements if they have elements that share the same 
+	# successors 
+		foreach Beginning $Beginnings {
+			RecursivelyTraverseLeftToRight $Beginning $Order $NewDepth Result
+		}
+	# Get children not covered by 'getBeginnings' 
+		tplet UnorderedChildren $BopElement getChildren -excludeOrderedBy [lindex $Order 0]
+		foreach Child $UnorderedChildren {
+			RecursivelyTraverseTopToBottom $Child $Order $NewDepth Result
+		} 
+	}
+
+	proc RecursivelyTraverseLeftToRight {BopElement Order Depth ResultVar} {
+	 upvar $ResultVar Result 
+	# Look at the successor relation depicted below (you 
+	# get the predecessors by inverting the direction of 
+	# the arrows): 
+	#                            ______ 
+	#				            |      | 
+	#  ______       ______      | id13 |      ______       ______ 
+	# |      |     |      | --> |______| --> |      |     |      | 
+	# | id11 | --> | id12 |      ______      | id15 | --> | id16 | 
+	# |______|     |______| --> |      | --> |______|     |______|	
+	#                           | id14 | 
+	#                           |______| 
+	# 
+	# You can easily imagine that in the course of 
+	# traversing left to right it might happen that a 
+	# 'ProcessOccurrence' element gets visited more than 
+	# once. In the picture above these would be the one 
+	# with id="id15" and all that follow. We call this a 
+	# <<join>>. 
+	# 
+	# Here we count such joins and immediately return so 
+	# to not process 'ProcessOccurrence' elements more 
+	# than once.
+		if {[info exists Result([list visitedOrdered $BopElement])]} {
+			incr Result(joins) 
+			###### 
+			return 
+			###### 
+		}
+		
+	set Result([list visitedOrdered $BopElement]) {}
+	 RecursivelyTraverseTopToBottom $BopElement $Order $Depth Result
+	 tplet Successors $BopElement getSuccessors -by $Order 
+		foreach Successor $Successors {
+				RecursivelyTraverseLeftToRight $Successor $Order $Depth Result
+		}
+	}
+#LANIT from manual
+	proc CheckDeepLevel {ProcessHeader FirstProcessFlag} {
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Check Level proc started ...  ---"
+
+		tplet BopLines $ProcessHeader getBomLines -maxLevel infinite
+		foreach ProcessOccurrence $BopLines {
+		incr FirstProcessFlag 1
+		  tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Check Level proc: FirstProcessFlag is $FirstProcessFlag for ProcessOccurrence=$ProcessOccurrence  ---"
+		}
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT Check Level proc finished ---"
+	}
+	
+	proc CheckSequences {ProcessHeader} {
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CheckSequences proc started ...  ---"	
+		set Order {container}
+		WalkProcessTree $ProcessHeader $Order ""
+		
+		tpwrite -logchannel [::T4X::CORE::getSessionLogChannel] -mtype OK " ---- LANIT CheckSequences proc finished ...  ---"
+	}
+  
+}
